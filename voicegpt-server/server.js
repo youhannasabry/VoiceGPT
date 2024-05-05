@@ -1,8 +1,8 @@
 require('dotenv').config();
 
 const { OpenAI } = require('openai');
+const { ElevenLabsClient } = require('elevenlabs');
 const http = require('http');
-const WebSocket = require('ws');
 const socketIo = require('socket.io');
 const express = require('express');
 const cors = require('cors');
@@ -27,75 +27,28 @@ const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
 });
 
-const voiceId = "21m00Tcm4TlvDq8ikWAM"; // replace with your voice_id
+const voice = "TWUKKXAylkYxxlPe4gx0";
 const model = 'eleven_turbo_v2';
-const wsUrl = `wss://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream-input?model_id=${model}`;
-
+const elevenLabsClient = new ElevenLabsClient({
+    apiKey: process.env.ELEVENLABS_API_KEY,
+  });
 
 // Function to convert text to speech and send the audio URL back to the client
-async function textToSpeechAndSend(socket, text) {
-    const xiApiKey = process.env.ELEVENLABS_API_KEY;
-    const wsSocket = new WebSocket(wsUrl);
-
-    wsSocket.onopen = () => {
-        // Initialize the connection with BOS
-        const bosMessage = {
-            "text": " ",
-            "voice_settings": {
-                "stability": 0.5,
-                "similarity_boost": 0.8
-            },
-            "xi_api_key": xiApiKey,
-        };
-
-        wsSocket.send(JSON.stringify(bosMessage));  // Corrected to use wsSocket instead of socket
-
-        // Send the input text message
-        const textMessage = {
-            "text": text,
-            "try_trigger_generation": true,
-        };
-
-        wsSocket.send(JSON.stringify(textMessage));  // Corrected to use wsSocket instead of socket
-
-        // End the input stream
-        const eosMessage = {
-            "text": ""
-        };
-
-        wsSocket.send(JSON.stringify(eosMessage));  // Corrected to use wsSocket instead of socket
-    };
-
-    wsSocket.onmessage = (event) => {
-        const response = JSON.parse(event.data);
-
-        if (response.audio) {
-            const audioChunk = Buffer.from(response.audio, 'base64');  // Corrected decoding method
-            console.log("Received audio chunk");
-            // Emit the audio URL for the frontend to play
-            const audioBlob = new Blob([audioChunk], { type: 'audio/mp3' });
-            const audioUrl = URL.createObjectURL(audioBlob);
-            socket.emit('audio_url', audioUrl);
-        } else {
-            console.log("No audio data in the response");
-        }
-
-        if (response.isFinal) {
-            socket.emit('audio_end');
-        }
-    };
-
-    wsSocket.onerror = (error) => {
-        console.error('WebSocket Error:', error);
-        socket.emit('error', 'WebSocket error in TTS conversion');
-    };
-
-    wsSocket.onclose = (event) => {
-        if (!event.wasClean) {
-            console.warn('TTS WebSocket closed unexpectedly');
-        }
-    };
-}
+const createAudioStreamFromText = async (text) => {
+    const audioStream = await elevenLabsClient.generate({
+      voice,
+      model_id: model,
+      text,
+    });
+  
+    const chunks = [];
+    for await (const chunk of audioStream) {
+      chunks.push(chunk);
+    }
+  
+    const content = Buffer.concat(chunks);
+    return content;
+  };
 
 // Handle WebSocket connections
 io.on('connection', (socket) => {
@@ -121,10 +74,10 @@ io.on('connection', (socket) => {
             const aiMessage = response.choices[0].message.content;
             conversationHistory.push({ "role": "assistant", "content": aiMessage });
 
-
+            // Stream the GPT-4 response to the client
+            const audioStream = await createAudioStreamFromText(aiMessage);
             socket.emit('message', aiMessage);
-            // Convert the GPT-4 response to speech and stream it back to the client
-            // textToSpeechAndSend(socket, aiMessage);
+            socket.emit('audio', { audio: audioStream.toString('base64') });
         } catch (error) {
             console.error('Error in calling OpenAI API:', error);
             socket.emit('message', 'Error processing your message.');

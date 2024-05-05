@@ -14,8 +14,15 @@ function App() {
       setMessages((prevMessages) => [...prevMessages, message]);
     });
 
+    // Listen for audio from the server
+    socket.on('audio', (audioData) => {
+      const audio = new Audio(`data:audio/mp3;base64,${audioData.audio}`);
+      audio.play();
+    });
+
     return () => {
       socket.off('message');
+      socket.off('audio');
     };
   }, []);
 
