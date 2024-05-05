@@ -3,34 +3,41 @@ import ChatInput from './components/ChatInput';
 import MessageDisplay from './components/MessageDisplay';
 import io from 'socket.io-client';
 
+// Establish a connection to the server
 const socket = io('http://localhost:3000');
 
 function App() {
+  // State to store messages
   const [messages, setMessages] = useState([]);
 
   useEffect(() => {
-    // Listen for messages from the server
-    socket.on('message', (message) => {
+    // Function to handle incoming messages
+    const handleNewMessage = (message) => {
       setMessages((prevMessages) => [...prevMessages, message]);
-    });
+    };
 
-    // Listen for audio from the server
-    socket.on('audio', (audioData) => {
+    // Function to handle incoming audio data
+    const handleNewAudio = (audioData) => {
       const audio = new Audio(`data:audio/mp3;base64,${audioData.audio}`);
       audio.play();
-    });
+    };
 
+    // Register event listeners for messages and audio
+    socket.on('message', handleNewMessage);
+    socket.on('audio', handleNewAudio);
+
+    // Cleanup function to remove event listeners
     return () => {
-      socket.off('message');
-      socket.off('audio');
+      socket.off('message', handleNewMessage);
+      socket.off('audio', handleNewAudio);
     };
   }, []);
 
+  // Function to send a new message to the server
   const handleSend = (newMessage) => {
-    // Send the message to the server
     socket.emit('message', newMessage);
-    // Optionally add it to our state here if we don't want to rely on the server echo
-    setMessages([...messages, newMessage]);
+    // Update local state to include the new message
+    setMessages((prevMessages) => [...prevMessages, newMessage]);
   };
 
   return (
