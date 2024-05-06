@@ -4,7 +4,7 @@ import MessageDisplay from './components/MessageDisplay';
 import io from 'socket.io-client';
 
 // Establish a connection to the server
-const socket = io('http://localhost:3000');
+const socket = io('https://voicegpt-server-22d7f06d60b3.herokuapp.com/');
 
 function App() {
   // State to store messages
