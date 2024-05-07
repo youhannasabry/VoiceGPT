@@ -9,7 +9,11 @@ const cors = require('cors');  // Import CORS to enable cross-origin requests
 
 // Create an Express application
 const app = express();
-app.use(cors());  // Enable CORS with default settings
+const corsOptions = {
+    origin: 'https://voice-gpt-jade-ten.vercel.app',
+    optionsSuccessStatus: 200 // For legacy browser support
+};
+app.use(cors(corsOptions));  // Enable CORS with default settings
 
 // Create a server from the Express app
 const server = http.createServer(app);
@@ -17,8 +21,9 @@ const server = http.createServer(app);
 // Initialize socket.io with the server
 const io = socketIo(server, {
     cors: {
-        origin: "*",  // Allow all origins (adjust in production for security)
-        methods: ["GET", "POST"]  // Allowed methods for CORS
+        origin: "https://voice-gpt-jade-ten.vercel.app/",  // Allow origins (adjust in production for security)
+        methods: ["GET", "POST"],  // Allowed methods for CORS
+        credentials: true,
     }
 });
 
@@ -37,16 +42,16 @@ const elevenLabsClient = new ElevenLabsClient({
 // Function to convert text to speech and send the audio URL back to the client
 const createAudioStreamFromText = async (text) => {
     const audioStream = await elevenLabsClient.generate({
-      voice,
-      model_id: model,
-      text,
+        voice,
+        model_id: model,
+        text,
     });
-  
+
     const chunks = [];
     for await (const chunk of audioStream) {
-      chunks.push(chunk);  // Collect audio stream chunks
+        chunks.push(chunk);  // Collect audio stream chunks
     }
-  
+
     const content = Buffer.concat(chunks);  // Combine chunks into a single buffer
     return content;
 };

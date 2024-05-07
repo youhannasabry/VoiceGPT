@@ -4,7 +4,10 @@ import MessageDisplay from './components/MessageDisplay';
 import io from 'socket.io-client';
 
 // Establish a connection to the server
-const socket = io('https://voicegpt-server-22d7f06d60b3.herokuapp.com/');
+const socket = io('https://voicegpt-server-22d7f06d60b3.herokuapp.com/', {
+  withCredentials: true,
+  transports: ['websocket']  // Use WebSocket to avoid CORS issues with HTTP polling
+});
 
 function App() {
   // State to store messages
