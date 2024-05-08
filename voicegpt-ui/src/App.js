@@ -12,6 +12,9 @@ const socket = io('https://voicegpt-server-22d7f06d60b3.herokuapp.com/', {
 function App() {
   // State to store messages
   const [messages, setMessages] = useState([]);
+  const [audioQueue, setAudioQueue] = useState([]);
+  const [isPlaying, setIsPlaying] = useState(false);
+
 
   useEffect(() => {
     // Function to handle incoming messages
@@ -21,9 +24,22 @@ function App() {
 
     // Function to handle incoming audio data
     const handleNewAudio = (audioData) => {
-      const audio = new Audio(`data:audio/mp3;base64,${audioData.audio}`);
-      audio.play();
+      setAudioQueue(prevQueue => [...prevQueue, `data:audio/mp3;base64,${audioData.audio}`]);
     };
+
+    const playAudio = (audioSrc) => {
+      const audio = new Audio(audioSrc);
+      audio.play();
+      audio.onended = () => {
+        setIsPlaying(false);
+        setAudioQueue(prevQueue => prevQueue.slice(1));
+      };
+      setIsPlaying(true);
+    };
+
+    if (!isPlaying && audioQueue.length > 0) {
+      playAudio(audioQueue[0]);
+    }
 
     // Register event listeners for messages and audio
     socket.on('message', handleNewMessage);
@@ -34,7 +50,7 @@ function App() {
       socket.off('message', handleNewMessage);
       socket.off('audio', handleNewAudio);
     };
-  }, []);
+  }, [audioQueue, isPlaying]);
 
   // Function to send a new message to the server
   const handleSend = (newMessage) => {
