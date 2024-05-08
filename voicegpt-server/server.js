@@ -1,11 +1,10 @@
 require('dotenv').config();  // Load environment variables from .env file
-
-const { OpenAI } = require('openai');  // Import OpenAI SDK
-const { ElevenLabsClient } = require('elevenlabs');  // Import ElevenLabs SDK
 const http = require('http');  // Import HTTP module for server creation
-const socketIo = require('socket.io');  // Import Socket.IO for real-time communication
 const express = require('express');  // Import Express framework
 const cors = require('cors');  // Import CORS to enable cross-origin requests
+const WebSocket = require('ws');
+const socketIo = require('socket.io');  // Import Socket.IO for real-time communication
+const { OpenAI } = require('openai');  // Import OpenAI SDK
 
 // Create an Express application
 const app = express();
@@ -27,61 +26,39 @@ const io = socketIo(server, {
     }
 });
 
-// OpenAI setup with API key from environment variables
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
 });
 
-// ElevenLabs setup with specific voice and model, and API key from environment variables
-const voice = "TWUKKXAylkYxxlPe4gx0";
+
+const voiceId = "TWUKKXAylkYxxlPe4gx0"; // replace with your voice_id
 const model = 'eleven_turbo_v2';
-const elevenLabsClient = new ElevenLabsClient({
-    apiKey: process.env.ELEVENLABS_API_KEY,
-});
+const wsUrl = `wss://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream-input?model_id=${model}`;
+let socket;
 
-// Function to convert text to speech and send the audio URL back to the client
-const createAudioStreamFromText = async (text) => {
-    const audioStream = await elevenLabsClient.generate({
-        voice,
-        model_id: model,
-        text,
-    });
-
-    const chunks = [];
-    for await (const chunk of audioStream) {
-        chunks.push(chunk);  // Collect audio stream chunks
-    }
-
-    const content = Buffer.concat(chunks);  // Combine chunks into a single buffer
-    return content;
-};
-
-// Function to remove Markdown formatting from text
-function stripMarkdown(markdownText) {
-    const plainText = markdownText
-        .replace(/!\[[^\]]*\]\((.*?)\s*("(?:.*[^"])")?\s*\)/g, '') // Remove images
-        .replace(/\[(.*?)\]\(.*?\)/g, '$1') // Convert links to text
-        .replace(/`{3,}(.*?)`{3,}/gs, '$1') // Remove code blocks
-        .replace(/`(.+?)`/g, '$1') // Remove inline code
-        .replace(/(\*\*|__)(.*?)\1/g, '$2') // Remove bold formatting
-        .replace(/(\*|_)(.*?)\1/g, '$2') // Remove emphasis
-        .replace(/\~\~(.*?)\~\~/g, '$1'); // Remove strikethrough
-
-    return plainText;
-}
-
-// Handle WebSocket connections
-io.on('connection', (socket) => {
+io.on('connection', (ioSocket) => {
     console.log('A user connected');
     let conversationHistory = [];  // Initialize conversation history
 
-    // Listen for messages from clients
-    socket.on('message', async (msg) => {
+    ioSocket.on('message', async (msg) => {
         console.log('Received message: ' + msg);
         conversationHistory.push({ "role": "user", "content": msg });  // Log user message
 
-        try {
-            // Generate a response using OpenAI's GPT-4 model
+        // Initialize WebSocket connection upon receiving a message
+        socket = new WebSocket(wsUrl);
+
+        socket.onopen = async function (event) {
+            const bosMessage = {
+                "text": " ",
+                "voice_settings": {
+                    "stability": 0.8,
+                    "similarity_boost": 0.8
+                },
+                "xi_api_key": process.env.ELEVENLABS_API_KEY, // replace with your API key
+            };
+
+            socket.send(JSON.stringify(bosMessage));
+
             const stream = await openai.chat.completions.create({
                 model: "gpt-4-turbo",
                 messages: conversationHistory,
@@ -93,50 +70,66 @@ io.on('connection', (socket) => {
                 stream: true,
             });
 
-            let buffer = "";  // Initialize an empty buffer to accumulate output
-
             for await (const chunk of stream) {
                 if (chunk.choices[0]?.delta?.content) {
-                    buffer += chunk.choices[0].delta.content;  // Accumulate the output in the buffer
-                    // Check if the buffer contains complete sentences
-                    const regex = /(?<=[.!?])\s+(?=[A-Z]|\d)/;
-                    const sentences = buffer.split(regex).filter(Boolean); // Split and remove empty elements
-                    if (sentences.length > 1) {
-                        let completeText = stripMarkdown(sentences.slice(0, -1).join(" "));  // Get all complete sentences
-                        conversationHistory.push({ "role": "assistant", "content": completeText });  // Log AI response
-
-                        const audioStream = await createAudioStreamFromText(completeText);
-                        socket.emit('message', completeText);
-                        socket.emit('audio', { audio: audioStream.toString('base64') });
-
-                        buffer = sentences[sentences.length - 1];  // Keep the incomplete sentence in the buffer
-                    }
+                    const textMessage = {
+                        "text": chunk.choices[0]?.delta?.content,
+                        "try_trigger_generation": true,
+                    };
+                    ioSocket.emit('message', chunk.choices[0]?.delta?.content);
+                    socket.send(JSON.stringify(textMessage));
                 }
             }
 
-            // After the loop, process any remaining content in the buffer
-            if (buffer.trim()) {
-                buffer = stripMarkdown(buffer);
-                conversationHistory.push({ "role": "assistant", "content": buffer });  // Log AI response
-                const audioStream = await createAudioStreamFromText(buffer);
-                socket.emit('message', buffer);
-                socket.emit('audio', { audio: audioStream.toString('base64') });
+            // Send the EOS message with an empty string
+            const eosMessage = {
+                "text": ""
+            };
+
+            socket.send(JSON.stringify(eosMessage));
+        };
+
+        socket.onmessage = function (event) {
+            const response = JSON.parse(event.data);
+
+            if (response.audio) {
+                console.log("Received audio chunk");
+                // decode and handle the audio data (e.g., play it)
+                const audioChunk = response.audio.toString("base64");  // decode base64
+                io.emit('audio', { audio: audioChunk }); // Emit the audio chunk through the io socket
+            } else {
+                console.log("No audio data in the response");
             }
 
-        } catch (error) {
-            console.error('Error in calling OpenAI API:', error);
-            socket.emit('message', 'Error processing your message.');  // Notify client of error
-        }
+            if (response.isFinal) {
+                // the generation is complete
+            }
+
+            if (response.normalizedAlignment) {
+                // use the alignment info if needed
+            }
+        };
+
+        socket.onerror = function (error) {
+            console.error(`WebSocket Error: ${error}`);
+        };
+
+        socket.onclose = function (event) {
+            if (event.wasClean) {
+                console.info(`Connection closed cleanly, code=${event.code}, reason=${event.reason}`);
+            } else {
+                console.warn('Connection died');
+            }
+        };
     });
 
     // Handle disconnection
-    socket.on('disconnect', () => {
+    ioSocket.on('disconnect', () => {
         console.log('A user disconnected');
         conversationHistory = [];  // Clear conversation history on disconnect
     });
 });
 
-// Set the server to listen on port 3000 or environment-specified port
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
